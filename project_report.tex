@@ -1,0 +1,217 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath}
+\usepackage{url}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=0.75in]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{parskip}
+\usepackage{hyperref}
+\usepackage{setspace}
+ 
+% ============================================================
+%  TITLE PAGE
+% ============================================================
+\title{%
+  \vspace{2cm}
+  {\LARGE \textbf{A Tree-Based Syntactic Complexity Analyzer\\for English Language Learners}}\\[0.4em]
+  {\normalsize CSC111 Project 2 Final Report}
+}
+\author{%
+  Tugra Canbaz \quad Elif Cakici \quad Alsade Brianna Daley\\[0.3em]
+}
+\date{\today}
+ 
+\begin{document}
+ 
+\begin{titlepage}
+  \maketitle
+  \thispagestyle{empty}
+\end{titlepage}
+ 
+\setcounter{page}{1}
+ 
+% ============================================================
+\section*{Introduction}
+% ============================================================
+ 
+\textbf{Research Question: How can we model English sentences using parse trees and design custom tree-based algorithms to measure syntactic complexity, in order to provide useful, structured feedback to English language learners?}
+ 
+When learning a new language, tracking genuine progress is one of the hardest challenges a learner faces. Standardized tests and vocabulary quizzes offer one dimension of measurement, but they do not capture how sophisticated a learner's sentence structures have become. Vocabulary size alone is a poor proxy for fluency: the way a learner arranges clauses, embeds subordinate structures, and builds hierarchical phrases reveals far more about their actual development than any word count. One of the most well-established indicators of linguistic growth is \textit{syntactic complexity}, the structural richness of the sentences a learner produces \cite{carla}.
+ 
+In linguistics and computational linguistics, sentence structure is most naturally represented using \textit{parse trees}. A parse tree decomposes a sentence into its grammatical constituents, noun phrases (NP), verb phrases (VP), subordinate clauses (SBAR), and so on, and arranges them in a hierarchy that reflects English's recursive syntactic structure. The depth of this tree, the number of subordinate clauses it contains, and the average branching at each node are all measurable signals of structural complexity. Prior research confirms that tree-based features correlate meaningfully with CEFR proficiency levels, with more advanced learners consistently producing sentences of greater hierarchical depth and clause density \cite{zhang2025}.
+ 
+Our project builds a \textbf{Tree-Based Sentence Complexity Analyzer} that evaluates English sentences using syntactic parse trees generated through the NLTK library \cite{nltk, nltk_project}. The system extracts three core structural metrics, tree depth, clause count, and branching factor, combines them into a weighted complexity score, maps that score to an approximate CEFR level (A1 through C2), and returns personalized, metric-tied feedback along with upgraded sentence suggestions. When run on learner corpus data, the system also generates bar charts and a summary table comparing average complexity metrics across proficiency levels, allowing visual validation that syntactic complexity increases monotonically with CEFR level.
+ 
+% ============================================================
+\section*{Datasets}
+% ============================================================
+
+\subsection*{EFCAMDAT Cleaned Sub-Corpus}
+ 
+The Education First Cambridge Open Language Database (EFCAMDAT) \cite{efcamdat} is a large-scale learner corpus. We use the publicly distributed \textit{cleaned sub-corpus} prepared by Shatz (2020), which covers levels 1--15 for learners from eleven nationalities: Brazilian, Chinese, Taiwanese, Russian, Saudi Arabian, Mexican, German, Italian, French, Japanese, and Turkish. The cleaning pipeline removed common markup tags, ultra-short texts (under 20 words), texts with substantial non-English content, near-duplicate texts, and texts with outlier word counts. Texts were additionally split by prompt type; we used the file corresponding to the main (first) prompt: \texttt{Final database (main prompts).xlsx}.
+
+We selected 100 rows from each cefr level to create a smaller database, and converted it to a csv file called small\_data\_cleaned.csv. Our program reads this file using the \texttt{pandas} library \cite{pandas} via \texttt{pd.read\_csv()}. The only column used is the text column containing learner-written responses (the raw sentence strings). Proficiency level labels, where present, allow grouping for aggregate analysis. None of the other columns were used. 
+ 
+\subsection*{Dataset Download Instructions}
+ 
+The small\_data\_cleaned.csv file was submitted to MarkUs alongside this report. 
+Place this file in the same directory as \texttt{main.py} before running the program.
+ 
+% ============================================================
+\section*{Computational Overview}
+% ============================================================
+ 
+\subsection*{Data Representation with ParseTree Class}
+ 
+The central data structure of this project is the \texttt{ParseTree} class, defined in \texttt{parse\_tree.py}. Each \texttt{ParseTree} node stores a string \texttt{label},either a grammatical tag such as \texttt{'NP'}, \texttt{'VP'}, or \texttt{'SBAR'} for internal nodes, or a word token string for leaf nodes, and a private list \texttt{\_subtrees} of child \texttt{ParseTree} objects. Two representation invariants hold throughout the program: \texttt{label} is never empty, and a node is a leaf if and only if its subtree list is empty.
+ 
+Trees are the appropriate data structure for this domain because English syntax is inherently recursive and hierarchical \cite{carla}. A flat list of words cannot represent the structural relationship between a subject noun phrase and its predicate verb phrase, let alone the nesting of a relative clause inside a prepositional phrase inside a verb phrase. The \texttt{ParseTree} class supports all operations needed for metric computation: \texttt{get\_subtrees()} returns the list of children, \texttt{is\_leaf()} identifies terminal nodes, \texttt{add\_subtree()} builds the tree during parsing, and \texttt{find\_subtree\_by\_label()} supports targeted structural queries.
+ 
+\subsection*{Building Parse Trees from Sentences}
+ 
+Raw sentences are converted into \texttt{ParseTree} instances through a two-stage pipeline.
+ 
+\textbf{Stage 1: NLTK parsing.} The function \texttt{sentence\_to\_parsetree(sentence)} in \texttt{parse\_tree.py} tokenizes the input string using NLTK's \texttt{word\_tokenize()} \cite{nltk}, assigns part-of-speech tags using \texttt{nltk.pos\_tag()}, and then parses the tagged token sequence using a \texttt{RegexpParser} with a hand-written context-free grammar. The grammar (the module-level constant \texttt{\_GRAMMAR}) defines phrase patterns for NP, PP, ADJP, VP, SBAR, and S using regular expressions over POS tag sequences. The \texttt{RegexpParser.parse()} method produces an \texttt{nltk.Tree} object representing the constituent structure of the sentence.
+ 
+\textbf{Stage 2: Conversion to custom tree.} The function \texttt{convert\_to\_parsetree(nltk\_tree)} in \texttt{parse\_tree.py} recursively converts this NLTK-native tree into our custom \texttt{ParseTree}. Each \texttt{nltk.Tree} node becomes a \texttt{ParseTree} with the same grammatical label; each \texttt{(word, pos\_tag)} leaf tuple becomes a \texttt{ParseTree} leaf whose label is the word string (the POS tag is discarded). This separation of concerns keeps the NLTK dependency contained to the parsing stage, while all downstream metric computations operate exclusively on our own \texttt{ParseTree} class.
+ 
+Dataset sentences are processed through the same pipeline inside \texttt{data\_analysis.py}. The function \texttt{process\_sentence(sentence)} first calls \texttt{clean\_sentence()} to normalize whitespace using a regular expression (\texttt{re.sub}), then tokenizes and POS-tags using NLTK, parses with the \texttt{RegexpParser}, and calls \texttt{convert\_to\_parsetree()} to return a custom \texttt{ParseTree}. The \texttt{if \_\_name\_\_ == "\_\_main\_\_"} block reads \texttt{small\_data\_cleaned.csv} via \texttt{pd.read\_csv()} and computes averages per CEFR level.
+ 
+\subsection*{Metric Computations}
+ 
+All syntactic metrics are implemented as recursive functions in \texttt{parse\_tree.py}, operating on \texttt{ParseTree} objects. Each function traverses the tree in $O(n)$ time, where $n$ is the number of nodes.
+ 
+\textbf{\texttt{get\_depth(tree)}} returns the length of the longest root-to-leaf path. A single leaf has depth 0; an internal node's depth is one plus the maximum depth of its children, computed via a recursive generator expression over \texttt{get\_subtrees()}.
+ 
+\textbf{\texttt{count\_clauses(tree)}} counts all nodes whose label is \texttt{'S'} or \texttt{'SBAR'}, including the root if it qualifies. Clause count is a direct measure of how many distinct propositional units a sentence expresses; sentences with more embedded clauses score higher \cite{zhang2025}.
+ 
+\textbf{\texttt{branching\_factor(tree)}} computes the mean number of children across all internal (non-leaf) nodes, using a nested helper \texttt{\_get\_values()} that collects child counts into a list before averaging. A high branching factor indicates that phrases are expanded with many modifiers and arguments.
+ 
+\textbf{\texttt{count\_nodes(tree)}} and \textbf{\texttt{count\_leaves(tree)}} are auxiliary metrics counting total nodes and word-token leaves respectively, used for diagnostic inspection.
+ 
+These three primary metrics are combined in \texttt{compute\_score(depth, clause\_count, branch)} in \texttt{feedback.py} using a weighted formula:
+\[
+  \text{score} = 0.4 \times \text{depth} + 0.3 \times \text{clause\_count} + 0.3 \times \text{branch}
+\]
+The result is rounded to two decimal places. The score is then mapped to a CEFR level string by \texttt{classify\_level(score)}, which applies threshold comparisons: score $< 2$ maps to A1, score $< 3$ to A2, score $< 4$ to B1, score $< 5$ to B2, and score $\geq 5$ to C1/C2 Advanced.
+ 
+\subsection*{Feedback Generation}
+ 
+The function \texttt{generate\_feedback(sentence, depth, clause\_count, branch)} in \texttt{feedback.py} produces personalized, metric-tied feedback by comparing each metric against threshold ranges. A depth of 2 or below triggers a note about shallow structure and a suggestion to add a descriptive phrase; a clause count of 1 triggers three alternative rewrites (adding a reason, a contrast, and a conditional); low branching triggers suggestions to add adjectives or prepositional phrases. The function returns a \texttt{tuple} of two lists: \texttt{feedback} (observations about current structure) and \texttt{suggestions} (concrete rewrites anchored to the input sentence). The companion function \texttt{suggest\_upgrade(sentence)} additionally produces four upgraded versions of the sentence by appending subordinate clauses of varying types.
+ 
+The full pipeline is orchestrated by \texttt{analyze\_sentence(sentence)} in \texttt{feedback.py}, which also calls \texttt{\_download\_nltk\_resources()} to ensure the required NLTK data packages (\texttt{punkt\_tab} and \texttt{averaged\_perceptron\_tagger\_eng}) are present before any parsing occurs.
+ 
+\subsection*{Visualizations and Results Display}
+ 
+The \texttt{visualizations.py} module generates four \texttt{matplotlib} \cite{matplotlib} charts and a formatted console table summarizing complexity metrics grouped by CEFR level (A1 through C2):
+ 
+\begin{itemize}
+  \item \textbf{Graph 1} (\texttt{graph1\_complexity\_score.png}): A bar chart of average complexity score per level, with value labels placed above each bar using \texttt{ax.text()}.
+  \item \textbf{Graph 2} (\texttt{graph2\_depth.png}): A bar chart of average parse tree depth per level.
+  \item \textbf{Graph 3} (\texttt{graph3\_clause\_count.png}): A bar chart of average clause count per level.
+  \item \textbf{Graph 4} (\texttt{graph4\_distribution.png}): An overlapping histogram (\texttt{ax.hist()}) showing the distribution of complexity scores within each CEFR level, revealing both central tendency and variance at each proficiency stage.
+  \item \textbf{Results Table}: Printed to the console by \texttt{print\_results\_table()}, showing average depth, clause count, and complexity score for all six levels in a formatted tabular layout using aligned f-strings.
+\end{itemize}
+ 
+Each chart is produced using \texttt{plt.subplots()}, styled with a shared six-color palette, and saved as a PNG file at 150~dpi via \texttt{plt.savefig()} before being displayed with \texttt{plt.show()}. The \texttt{matplotlib.pyplot} module's bar, histogram, axis-labeling, and grid functions are central to this module.
+ 
+% ============================================================
+\section*{Instructions for Obtaining Datasets and Running the Program}
+% ============================================================
+ 
+\subsection*{Requirements}
+ 
+Install all required Python libraries using the provided \texttt{requirements.txt}:
+ 
+\begin{verbatim}
+nltk
+matplotlib
+python-ta
+pandas
+\end{verbatim}
+ 
+\subsection*{Obtaining the Datasets}
+ 
+The dataset file has been uploaded to MarkUs as part of this submission. After downloading and extracting, place small\_data\_cleaned.csv in the same directory as main.py
+
+\subsection*{Running the Program}
+
+Run the entry point:
+ 
+\begin{verbatim}
+python main.py
+\end{verbatim}
+ 
+The program proceeds through the following stages automatically:
+ 
+\begin{enumerate}
+  \item \textbf{NLTK setup.} Required NLTK data packages are downloaded silently on first run.
+  \item \textbf{Test cases.} Four built-in sentences spanning A1 to C2 difficulty are analyzed. For each sentence, the console displays a formatted block containing: the input sentence, its complexity score, estimated CEFR level, individual metric values (depth, clause count, branching factor), a bulleted feedback section, specific rewrite suggestions, and two upgraded sentence versions. For example, the sentence \textit{``I like school.''} will score around 1.4 and be classified as A1 -- Beginner, while \textit{``The results, which were published last year, suggest a strong correlation.''} will score higher and reach B2 or above.
+  \item \textbf{Interactive mode.} The program prompts: \texttt{Enter a sentence (or press Enter to skip):}. The user may type any English sentence and press Enter to receive a full analysis, or press Enter immediately to skip this step.
+  \item \textbf{Results table.} A formatted CEFR summary table is printed to the console, showing average depth, clause count, and complexity score for A1 through C2.
+  \item \textbf{Visualizations.} Four matplotlib chart windows open in sequence. Each window must be closed before the next appears. All four charts are also saved as PNG files in the working directory: \texttt{graph1\_complexity\_score.png}, \texttt{graph2\_depth.png}, \texttt{graph3\_clause\_count.png}, and \texttt{graph4\_distribution.png}.
+\end{enumerate}
+ 
+% ============================================================
+\section*{Changes from the Project Proposal}
+% ============================================================
+ 
+Several aspects of the project evolved between the proposal and the final submission.
+ 
+First, the EFCAMDAT corpus access, which was pending institutional approval at proposal time, was resolved by using the publicly distributed cleaned sub-corpus (Shatz, 2020) \cite{efcamdat} rather than the full original database. This made the dataset immediately accessible and the cleaned version is better-suited for our analysis since noise, outliers, and near-duplicates have already been removed.
+ 
+Second, the complexity scoring formula was simplified. The proposal described a Wolfram-inspired approach \cite{wolfram} incorporating graph diameter and mean node distance in addition to tree depth. After implementation, these graph-theoretic measures added pipeline complexity without meaningfully improving the correlation between score and CEFR level in manual testing. We simplified to the three-feature weighted formula (depth, clause count, branching factor), which is more interpretable and more directly tied to the feedback messages.
+ 
+Third, the feedback system was significantly expanded. Rather than simply printing a score and level, the final program generates sentence-specific suggestions anchored to the user's own input text and produces upgraded rewrite examples via \texttt{suggest\_upgrade()}. This makes the tool genuinely instructional rather than merely diagnostic.
+ 
+Fourth, an interactive mode was added to \texttt{main.py} via \texttt{run\_interactive()}, allowing any user to analyze their own sentence at runtime. This was not part of the original proposal.
+ 
+Fifth, a dedicated data pipeline module (\texttt{data\_analysis.py}) was added to handle the EFCAMDAT dataset. The proposal anticipated processing this corpus but did not specify a separate module for it.
+ 
+% ============================================================
+\section*{Discussion}
+% ============================================================
+ 
+The results of our program are consistent with the core premise of the project: syntactic complexity, as measured by parse tree depth, clause count, and branching factor, increases meaningfully across CEFR proficiency levels. The bar charts generated by \texttt{visualizations.py} show a clear monotonic trend in all three metrics from A1 to C2, and the composite score cleanly separates the six levels without overlap in their average values. This is consistent with findings in the second language acquisition literature, which documents that structural elaboration; more clauses, deeper embedding, greater phrase modification, is a reliable marker of proficiency growth \cite{zhang2025, carla}.
+ 
+However, several important limitations should be acknowledged.
+ 
+The most significant limitation is the \texttt{RegexpParser}. Unlike a statistical or neural constituency parser (e.g., the Berkeley Neural Parser or spaCy's dependency parser), \texttt{RegexpParser} uses deterministic, hand-written rules. It misses many syntactically valid constructions that do not match its patterns, and its parse quality degrades on longer or more unusual sentences. Our tree depth and clause count values are, therefore, approximate lower bounds on true syntactic complexity. For a production-grade tool, a more powerful parser would be essential.
+ 
+A second limitation is that the scoring weights (0.4, 0.3, 0.3) and the CEFR level thresholds in \texttt{classify\_level()} were chosen by inspection rather than fitted on labeled data. The \texttt{\_CEFR\_DATA} values are computed by running \texttt{compute\_averages()} in \texttt{data\_analysis.py} over the EFCAMDAT cleaned sub-corpus, producing real per-level averages for depth, clause count, branching factor, and complexity score. A natural next step is to run \texttt{data\_analysis.py} over the full EFCAMDAT corpus, compute real per level averages, and use those to calibrate both the thresholds and the chart data.
+ 
+A third limitation is that our approach is purely structural and ignores lexical content entirely. A sentence with sophisticated vocabulary but simple syntax would receive a low score, which does not reflect its true communicative complexity. Incorporating lexical diversity measures (type-token ratio) or average word frequency would produce a more complete picture.
+ 
+Despite these limitations, the project successfully demonstrates that custom tree data structures and recursive algorithms can serve as the backbone of a practically useful NLP tool, connecting core CSC111 concepts (tree traversal, recursive computation, abstract data types) directly to a real-world application in language education technology. Future work could integrate a pre-trained parser, fit scoring weights on labeled corpus data, and extend the feedback system to cover lexical and discourse-level features.
+ 
+% ============================================================
+\begin{thebibliography}{9}
+ 
+\bibitem{nltk}
+Bird, S., Klein, E., and Loper, E. \textit{Natural Language Processing with Python}. O'Reilly Media, 2009. Available: \url{https://www.nltk.org/}
+ 
+\bibitem{carla}
+Center for Advanced Research on Language Acquisition (CARLA), ``Overview of Complexity of Learner Language,'' University of Minnesota, n.d. Available: \url{https://carla.umn.edu/learnerlanguage/complexity.html}
+ 
+\bibitem{efcamdat}
+Shatz, I. ``Refining and Modifying the EFCAMDAT: Lessons from Creating a New Corpus from an Existing Large-Scale English Learner Language Database.'' \textit{International Journal of Learner Corpus Research}, vol.~6, no.~2, pp.~220--236, 2020. Available: \url{https://ef-lab.mmll.cam.ac.uk/EFCAMDAT.html}
+ 
+\bibitem{nltk_project}
+Natural Language Toolkit (NLTK) Project. \textit{NLTK 3.x Documentation}, 2024. Available: \url{https://nltk.readthedocs.io/en/latest/}
+ 
+\bibitem{wolfram}
+Wolfram Research, ``SentenceComplexityMeasures,'' \textit{Wolfram Function Repository}, 2021. Available: \url{https://resources.wolframcloud.com/FunctionRepository/resources/SentenceComplexityMeasures/}
+ 
+\bibitem{zhang2025}
+Zhang, X. and Lu, X. ``Aligning Linguistic Complexity with the Difficulty of English Texts for L2 Learners Based on CEFR Levels.'' \textit{Studies in Second Language Acquisition}, vol.~47, no.~5, pp.~1407--1434, 2025. Available: \url{https://doi.org/10.1017/S0272263125101125}
+ 
+\bibitem{matplotlib}
+Hunter, J. D. ``Matplotlib: A 2D Graphics Environment.'' \textit{Computing in Science and Engineering}, vol.~9, no.~3, pp.~90--95, 2007. Available: \url{https://matplotlib.org/}
+ 
+\bibitem{pandas}
+McKinney, W. ``Data Structures for Statistical Computing in Python.'' \textit{Proceedings of the 9th Python in Science Conference}, pp.~56--61, 2010. Available: \url{https://pandas.pydata.org/}
+ 
+\end{thebibliography}
+ 
+\end{document}
